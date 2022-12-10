@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  EndPointName:
+    Description: "Enter SageMaker Endpoint"
+    Type: String
+  BucketName:
+    Type: String
+Resources:
+  Emailbucket:
+    Type: AWS::S3::Bucket
+    DependsOn: Lambda1InvokePermission
+    Properties:
+      BucketName: !Ref BucketName
+      AccessControl: PublicRead
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt [ Lambda1, Arn]
+
+  BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref Emailbucket
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Action:
+                - 's3:PutObject'
+              Effect: Allow
+              Resource: !Join
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref Emailbucket
+                  - /*
+              Principal: '*'
+
+  Lambda1InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Fn::GetAtt:
+          - Lambda1
+          - Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub 'arn:aws:s3:::${BucketName}'
+
+  Lambda1:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - Lambda1ExecutionRole
+    Properties:
+      Description: Lambda function for spam detection
+      Role: !GetAtt Lambda1ExecutionRole.Arn
+      Code:
+        S3Bucket: lambda-vk2503
+        S3Key: index.py.zip
+      Layers:
+        - arn:aws:lambda:us-east-1:668099181075:layer:AWSLambda-Python38-SciPy1x:107
+      MemorySize: 128
+      Environment:
+        Variables:
+          REGION: us-east-1
+          ENDPOINT_NAME: !Ref EndPointName
+      Handler: index.lambda_handler
+      Timeout: 30
+      Runtime: python3.8
+
+  Lambda1ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - "arn:aws:iam::aws:policy/AmazonSESFullAccess"
+        - "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+      Policies:
+        - PolicyName: allowLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: arn:aws:logs:*:*:*
+        - PolicyName: getAndDeleteObjects
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:ListBucket
+              Resource: 
+              - !Sub 'arn:aws:s3:::${BucketName}/*'
+
+  SESRuleSet:
+    Type: 'AWS::SES::ReceiptRuleSet'
+
+  SESRule:
+    Type: 'AWS::SES::ReceiptRule'
+    Properties:
+      Rule:
+        Actions:
+          - S3Action:
+              BucketName: !Ref Emailbucket
+        Recipients: 
+          - 'vikramk.me'
+          - 'saravananthanu.me'
+        Enabled: true
+        ScanEnabled: false
+      RuleSetName: !Ref SESRuleSet
